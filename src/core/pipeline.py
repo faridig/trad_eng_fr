@@ -31,7 +31,7 @@ class AsyncPipeline:
         self.translation_queue = asyncio.Queue()
         self.tts_queue = asyncio.Queue()
         
-        self.is_running = False
+        self.is_running = True
         self._last_error_msg = None
         
         # Accumulateur de segments audio
@@ -42,6 +42,7 @@ class AsyncPipeline:
     async def add_audio_chunk(self, chunk: np.ndarray):
         """Ajoute un chunk audio au pipeline. Normalisation mono automatique."""
         if not self.is_running:
+            logger.warning("Pipeline not running, chunk ignored.")
             return
 
         try:
@@ -63,7 +64,6 @@ class AsyncPipeline:
 
     async def process_audio_loop(self):
         """Boucle de traitement VAD et découpage en segments."""
-        self.is_running = True
         logger.info("Starting audio processing loop...")
         while self.is_running:
             try:
