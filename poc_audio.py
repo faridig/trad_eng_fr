@@ -3,27 +3,23 @@ import subprocess
 import os
 
 def find_devices():
+    """Détecte dynamiquement les périphériques par défaut du système."""
     with pulsectl.Pulse('device-finder') as pulse:
-        micro = None
-        system = None
+        info = pulse.server_info()
         
-        sources = pulse.source_list()
-        for s in sources:
-            # Recherche du micro digital ou casque
-            if "Mic1" in s.name or "Digital Microphone" in s.description:
-                micro = s.name
-            # Recherche du moniteur des haut-parleurs pour le son système
-            if "Speaker" in s.name and s.name.endswith(".monitor"):
-                system = s.name
-                
+        # Micro par défaut
+        micro = info.default_source_name
+        
+        # Sortie par défaut (Sink) -> on utilise son moniteur pour le Loopback
+        default_sink = info.default_sink_name
+        system = f"{default_sink}.monitor"
+        
         return micro, system
 
 def record_simultaneous(micro, system, duration=5):
     print(f"Recording simultaneous: Micro({micro}) and System({system}) for {duration}s...")
     
-    # Commande FFmpeg optimisée selon guidance audit :
-    # 1. -thread_queue_size pour éviter le blocage des threads PulseAudio
-    # 2. -t placé AVANT chaque entrée pour limiter la capture à la source
+    # Commande FFmpeg robuste et dynamique
     cmd = [
         'ffmpeg', '-y',
         '-loglevel', 'error',
@@ -34,7 +30,6 @@ def record_simultaneous(micro, system, duration=5):
     ]
     
     try:
-        # Utilisation de run avec timeout de sécurité global (duration + 5s)
         subprocess.run(cmd, check=True, timeout=duration + 5)
         print("Simultaneous recording successful.")
     except subprocess.TimeoutExpired:
@@ -45,14 +40,15 @@ def record_simultaneous(micro, system, duration=5):
         raise
 
 def main():
-    micro, system = find_devices()
-    
-    if not micro or not system:
-        print(f"Error: Required devices not found. Micro: {micro}, System: {system}")
-        return
-
-    record_simultaneous(micro, system)
-    print("PoC Complete. Files: test_micro.wav, test_system.wav")
+    try:
+        micro, system = find_devices()
+        print(f"Detected Default Micro: {micro}")
+        print(f"Detected Default System (Monitor): {system}")
+        
+        record_simultaneous(micro, system)
+        print("PoC Complete. Files: test_micro.wav, test_system.wav")
+    except Exception as e:
+        print(f"CRITICAL ERROR: {e}")
 
 if __name__ == "__main__":
     main()
