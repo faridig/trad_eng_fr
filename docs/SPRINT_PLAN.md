@@ -1,26 +1,36 @@
-# SPRINT PLAN N°0 - Audio Proof of Concept (PoC)
+# SPRINT PLAN N°2 - Traduction et Voix (The Final Bridge)
 
-**Sprint Goal** : Valider techniquement la capture simultanée du micro et du son système (Loopback) sur Pop!_OS.
-
----
-
-## [PBI-000-A] Setup Environnement Audio
-**Priorité** : Haute | **Estimation** : S
-
-**User Story** : "En tant que Lead-Dev, je veux installer PipeWire et les outils audio pour commencer les tests de capture."
-**Critères d'Acceptation** :
-- [ ] Environnement Python 3.10+ prêt.
-- [ ] Bibliothèques `sounddevice` et `pydub` (ou `pyaudio`) installées.
-- [ ] Liste des devices PipeWire accessible via script.
+**Sprint Goal** : Connecter la transcription à la traduction locale et générer la voix de sortie avec Kokoro-82M.
 
 ---
 
-## [PBI-000-B] Capture Audio Multi-Source (PoC Brute)
-**Priorité** : Critique | **Estimation** : S
+## [PBI-003] Pipeline de Traduction (MarianMT)
+**Priorité** : Haute | **Estimation** : M
 
-**User Story** : "En tant qu'utilisateur, je veux prouver que le système peut enregistrer mon micro et le son de mes haut-parleurs séparément."
+**User Story** : "En tant qu'utilisateur, je veux que mon texte français soit traduit instantanément en anglais (et vice versa)."
 **Critères d'Acceptation** :
-- [ ] Script `poc_audio.py` créé.
-- [ ] Enregistre 5s du Micro -> `test_micro.wav`.
-- [ ] Enregistre 5s du Son Système (YouTube/Zoom) -> `test_system.wav`.
-- [ ] Succès si les deux fichiers sont audibles et distincts.
+- [ ] Intégration des modèles `Helsinki-NLP/opus-mt-fr-en` et `en-fr`.
+- [ ] Inférence via `CTranslate2` pour une latence < 50ms.
+- [ ] Support des caractères spéciaux et de la ponctuation.
+
+---
+
+## [PBI-002] Synthèse Vocale (Kokoro-82M)
+**Priorité** : Haute | **Estimation** : M
+
+**User Story** : "En tant qu'interlocuteur, je veux entendre la traduction avec une voix naturelle et fluide."
+**Critères d'Acceptation** :
+- [ ] Intégration de `Kokoro-82M` (via Python/ONNX/GPU).
+- [ ] Génération de l'audio FR et EN.
+- [ ] Streaming de l'audio vers la carte son (Haut-parleurs/Casque) pour test.
+
+---
+
+## [PBI-002-B] Orchestration Asynchrone (Main Loop)
+**Priorité** : Haute | **Estimation** : L
+
+**User Story** : "En tant que développeur, je veux que tout le pipeline (Capture -> STT -> Trad -> TTS -> Play) s'exécute sans blocage."
+**Critères d'Acceptation** :
+- [ ] Mise en place de la boucle `asyncio` finale.
+- [ ] Gestion des files d'attente pour chaque étape.
+- [ ] Mesure de la latence "End-to-End" (Objectif < 2s).

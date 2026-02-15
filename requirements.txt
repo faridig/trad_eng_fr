@@ -8,3 +8,6 @@ faster-whisper
 onnxruntime-gpu
 torch
 torchaudio
+transformers
+sentencepiece
+ctranslate2>=4.0.0
