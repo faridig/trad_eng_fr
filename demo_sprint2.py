@@ -4,8 +4,14 @@ import soundfile as sf
 from src.core.pipeline import AsyncPipeline
 
 async def run_demo():
-    print("Initialisation du pipeline Sprint 2...")
-    pipeline = AsyncPipeline(model_size="large-v3")
+    print("Initialisation du pipeline Sprint 2 (Robust Edition)...")
+    
+    # Lecture du fichier de test pour obtenir le samplerate
+    print("Analyse du fichier de test 'test_micro.wav'...")
+    data, samplerate = sf.read('test_micro.wav')
+    print(f"Format détecté: {samplerate}Hz, {data.ndim} canaux")
+
+    pipeline = AsyncPipeline(model_size="large-v3", input_sample_rate=samplerate)
     
     # Lancement des boucles en arrière-plan
     tasks = [
@@ -15,26 +21,18 @@ async def run_demo():
         asyncio.create_task(pipeline.tts_loop())
     ]
     
-    print("Lecture du fichier de test 'test_micro.wav'...")
-    data, samplerate = sf.read('test_micro.wav')
+    # Découpage en chunks de 32ms (relatif au samplerate d'entrée)
+    chunk_size = int(samplerate * 0.032) 
+    print(f"Envoi de l'audio par chunks de {chunk_size} samples...")
     
-    # On s'assure que c'est du 16kHz mono
-    if samplerate != 16000:
-        # Simplification pour la démo: on suppose que le fichier est déjà au bon format
-        # ou on pourrait resampler
-        pass
-        
-    # Découpage en chunks de 32ms (512 samples à 16kHz)
-    chunk_size = 512
     for i in range(0, len(data), chunk_size):
         chunk = data[i:i+chunk_size]
-        if len(chunk) == chunk_size:
-            await pipeline.add_audio_chunk(chunk.astype(np.float32))
-            # Simuler le temps réel
-            await asyncio.sleep(0.01) # Accéléré pour la démo
+        await pipeline.add_audio_chunk(chunk)
+        # On ne simule plus le sleep ici pour aller plus vite dans le test
+        # mais dans un vrai micro, ça viendrait au fil de l'eau
             
-    print("Attente de la fin du traitement...")
-    await asyncio.sleep(10) # Laisse le temps au pipeline de finir
+    print("Attente de la fin du traitement (15s)...")
+    await asyncio.sleep(15) 
     
     pipeline.stop()
     for t in tasks:

@@ -21,9 +21,13 @@ class VADDetector:
     def is_speech(self, audio_chunk: np.ndarray) -> bool:
         """
         Détermine si le chunk audio contient de la parole.
-        audio_chunk: tableau numpy (float32) à 16kHz.
+        audio_chunk: tableau numpy (float32).
         Supporte des chunks de taille arbitraire en les découpant.
         """
+        # Normalisation Mono automatique
+        if audio_chunk.ndim > 1:
+            audio_chunk = audio_chunk.mean(axis=-1)
+
         if audio_chunk.dtype != np.float32:
             audio_chunk = audio_chunk.astype(np.float32)
             
