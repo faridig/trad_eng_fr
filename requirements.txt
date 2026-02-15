@@ -1,6 +1,10 @@
 cffi==2.0.0
-numpy==2.4.2
+numpy
 pulsectl==24.12.0
 pycparser==3.0
 pydub==0.25.1
 sounddevice==0.5.5
+faster-whisper
+onnxruntime-gpu
+torch
+torchaudio
