@@ -21,20 +21,25 @@ def find_devices():
 def record_simultaneous(micro, system, duration=5):
     print(f"Recording simultaneous: Micro({micro}) and System({system}) for {duration}s...")
     
-    # Commande unique FFmpeg pour capture parallèle avec silence technique (-loglevel error)
+    # Commande FFmpeg optimisée selon guidance audit :
+    # 1. -thread_queue_size pour éviter le blocage des threads PulseAudio
+    # 2. -t placé AVANT chaque entrée pour limiter la capture à la source
     cmd = [
         'ffmpeg', '-y',
         '-loglevel', 'error',
-        '-f', 'pulse', '-i', micro,
-        '-f', 'pulse', '-i', system,
-        '-t', str(duration),
+        '-thread_queue_size', '1024', '-t', str(duration), '-f', 'pulse', '-i', micro,
+        '-thread_queue_size', '1024', '-t', str(duration), '-f', 'pulse', '-i', system,
         '-map', '0:a', 'test_micro.wav',
         '-map', '1:a', 'test_system.wav'
     ]
     
     try:
-        subprocess.run(cmd, check=True)
+        # Utilisation de run avec timeout de sécurité global (duration + 5s)
+        subprocess.run(cmd, check=True, timeout=duration + 5)
         print("Simultaneous recording successful.")
+    except subprocess.TimeoutExpired:
+        print("Error: Recording timed out. FFmpeg failed to stop.")
+        raise
     except subprocess.CalledProcessError as e:
         print(f"Error during recording: {e}")
         raise
