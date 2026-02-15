@@ -4,7 +4,7 @@ from src.core.vad import VADDetector
 from src.stt.transcriber import Transcriber
 
 class AsyncPipeline:
-    def __init__(self, vad_threshold=0.5, model_size="distil-large-v3"):
+    def __init__(self, vad_threshold=0.5, model_size="large-v3"):
         self.vad = VADDetector(threshold=vad_threshold)
         self.transcriber = Transcriber(model_size=model_size)
         self.audio_queue = asyncio.Queue()
@@ -14,7 +14,7 @@ class AsyncPipeline:
         # Accumulateur de segments audio
         self.current_segment = []
         self.silence_chunks = 0
-        self.MAX_SILENCE_CHUNKS = 15  # Environ 480ms de silence avant de couper (15 * 32ms)
+        self.MAX_SILENCE_CHUNKS = 25  # Environ 800ms de silence avant de couper (25 * 32ms)
 
     async def add_audio_chunk(self, chunk: np.ndarray):
         """Ajoute un chunk audio (16kHz) au pipeline."""
@@ -29,6 +29,9 @@ class AsyncPipeline:
                 is_speech = self.vad.is_speech(chunk)
                 
                 if is_speech:
+                    if not self.current_segment:
+                        # On peut optionnellement ajouter un petit buffer de pré-roll ici
+                        pass
                     self.current_segment.append(chunk)
                     self.silence_chunks = 0
                 else:
@@ -38,8 +41,11 @@ class AsyncPipeline:
                         
                         if self.silence_chunks >= self.MAX_SILENCE_CHUNKS:
                             # Fin de segment détectée
-                            full_segment = np.concatenate(self.current_segment)
-                            await self.transcription_queue.put(full_segment)
+                            # On retire le silence excédentaire de la fin avant l'envoi
+                            actual_segment = self.current_segment[:-self.MAX_SILENCE_CHUNKS]
+                            if actual_segment:
+                                full_segment = np.concatenate(actual_segment)
+                                await self.transcription_queue.put(full_segment)
                             self.current_segment = []
                             self.silence_chunks = 0
                 

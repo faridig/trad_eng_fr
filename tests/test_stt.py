@@ -21,8 +21,8 @@ def load_wav_to_numpy(path):
 
 @pytest.mark.skipif(not os.path.exists("test_micro.wav"), reason="Test file not found")
 def test_transcription_on_file():
-    # Note: Ce test peut être long la première fois (téléchargement du modèle)
-    transcriber = Transcriber(model_size="distil-large-v3", device="cuda")
+    # On utilise le défaut de la classe (large-v3)
+    transcriber = Transcriber(device="cuda")
     audio = load_wav_to_numpy("test_micro.wav")
     
     text, info = transcriber.transcribe(audio, language="fr")
