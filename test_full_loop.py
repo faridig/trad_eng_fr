@@ -2,6 +2,7 @@ import asyncio
 import numpy as np
 import soundfile as sf
 import time
+import pytest
 from src.core.tts import TTS
 from src.core.pipeline import AsyncPipeline
 import os
@@ -10,8 +11,9 @@ import logging
 # Désactiver les logs excessifs pour y voir clair
 logging.getLogger("faster_whisper").setLevel(logging.ERROR)
 
-async def test_full():
-    print("=== TEST DE FIDÉLITÉ ET LATENCE E2E ===")
+@pytest.mark.asyncio
+async def test_full_pipeline_fidelity():
+    print("\n=== TEST DE FIDÉLITÉ ET LATENCE E2E ===")
     
     # 1. Préparation de l'audio de test (Natif Français)
     tts = TTS()
@@ -142,10 +144,13 @@ async def test_full():
     
     if stt_norm == source_norm and results["latency"] < 2.0 and results["latency"] > 0:
         print("\nRESULTAT GLOBAL: SUCCÈS ✅")
-        return True
+        assert True
     else:
         print("\nRESULTAT GLOBAL: ÉCHEC ❌")
-        return False
+        assert stt_norm == source_norm
+        assert results["latency"] < 2.0
 
 if __name__ == "__main__":
-    asyncio.run(test_full())
+    # Si lancé directement, on utilise pytest pour bénéficier des plugins
+    import sys
+    sys.exit(pytest.main([__file__, "-s"]))

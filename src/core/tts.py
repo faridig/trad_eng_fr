@@ -82,5 +82,8 @@ class TTS:
         Joue l'audio sur la sortie par défaut.
         """
         if samples is not None:
-            sd.play(samples, sample_rate)
-            sd.wait()
+            try:
+                sd.play(samples, sample_rate)
+                sd.wait()
+            except Exception as e:
+                print(f"TTS: Lecture audio impossible (Pas de carte son ?): {e}")

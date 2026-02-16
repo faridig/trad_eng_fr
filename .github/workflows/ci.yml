@@ -32,6 +32,5 @@ jobs:
     - name: Run tests
       run: |
         export PYTHONPATH=$PYTHONPATH:.
-        # On ignore les erreurs de connexion à PulseAudio en CI pour le moment
-        # car on n'a pas de serveur PulseAudio qui tourne dans le runner.
-        pytest || echo "Tests failed (expected in headless CI without PulseAudio)"
+        # On ne peut plus ignorer les échecs, la qualité est primordiale
+        pytest -s
