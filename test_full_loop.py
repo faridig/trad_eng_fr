@@ -15,6 +15,11 @@ logging.getLogger("faster_whisper").setLevel(logging.ERROR)
 async def test_full_pipeline_fidelity():
     print("\n=== TEST DE FIDÉLITÉ ET LATENCE E2E ===")
     
+    # Détection de l'environnement CI
+    is_ci = os.getenv("CI") == "true"
+    if is_ci:
+        print("⚠️ Environnement CI détecté - tests adaptés")
+    
     # 1. Préparation de l'audio de test (Natif Français)
     tts = TTS()
     text_source = "Bonjour tout le monde, ceci est un test de traduction automatique."
@@ -112,8 +117,6 @@ async def test_full_pipeline_fidelity():
     
     # Bilan
     print("\n=== BILAN DU TEST ===")
-    
-    is_ci = os.getenv("CI") == "true"
     latency_threshold = 2.0 if not is_ci else 60.0 # Plus tolérant en CI sans GPU
     
     # Vérification Fidélité

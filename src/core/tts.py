@@ -3,6 +3,9 @@ import numpy as np
 import sounddevice as sd
 from kokoro_onnx import Kokoro
 from huggingface_hub import hf_hub_download
+import time
+from typing import Tuple
+import logging
 
 # Monkey-patch np.load pour allow_pickle=True car kokoro-onnx ne le fait pas
 # et NumPy 2.0+ l'interdit par défaut pour les objets.
@@ -12,6 +15,59 @@ def patched_load(*args, **kwargs):
         kwargs["allow_pickle"] = True
     return orig_load(*args, **kwargs)
 np.load = patched_load
+
+# Patch pour kokoro-onnx bug: speed doit être float32, pas int32
+# Solution simple: monkey-patch la méthode _create_audio de Kokoro
+import kokoro_onnx
+
+# Sauvegarder la méthode originale
+_original_create_audio = kokoro_onnx.Kokoro._create_audio
+
+def _patched_create_audio(self, phonemes: str, voice, speed: float):
+    """
+    Version patchée de _create_audio qui corrige le bug int32/float32.
+    """
+    import numpy as np
+    import time
+    
+    MAX_PHONEME_LENGTH = 512
+    SAMPLE_RATE = 24000
+    
+    if len(phonemes) > MAX_PHONEME_LENGTH:
+        phonemes = phonemes[:MAX_PHONEME_LENGTH]
+    
+    start_t = time.time()
+    tokens = np.array(self.tokenizer.tokenize(phonemes), dtype=np.int64)
+    
+    # CORRECTION: C'est voice[len(tokens)] (indexation), pas voice[len(tokens):] (slicing)
+    voice_slice = voice[len(tokens)]
+    
+    tokens = [[0, *tokens, 0]]
+    
+    # CORRECTION DU BUG: speed doit être float32, pas int32
+    if "input_ids" in [i.name for i in self.sess.get_inputs()]:
+        # Newer export versions - CORRIGÉ: dtype=np.float32 au lieu de np.int32
+        inputs = {
+            "input_ids": tokens,
+            "style": np.array(voice_slice, dtype=np.float32),
+            "speed": np.array([speed], dtype=np.float32),  # CORRIGÉ: float32
+        }
+    else:
+        inputs = {
+            "tokens": tokens,
+            "style": voice_slice,
+            "speed": np.ones(1, dtype=np.float32) * speed,
+        }
+    
+    audio = self.sess.run(None, inputs)[0]
+    return audio, SAMPLE_RATE
+
+# Appliquer le patch
+kokoro_onnx.Kokoro._create_audio = _patched_create_audio
+
+class PatchedKokoro(Kokoro):
+    """Wrapper pour utiliser le Kokoro patché."""
+    pass
 
 class TTS:
     """
@@ -25,7 +81,8 @@ class TTS:
         self.model_path = self._ensure_model()
         self.voices_path = self._ensure_voices()
         
-        self.kokoro = Kokoro(self.model_path, self.voices_path)
+        # Utiliser la version patchée de Kokoro
+        self.kokoro = PatchedKokoro(self.model_path, self.voices_path)
 
     def _ensure_model(self):
         path = os.path.join(self.model_dir, "model.onnx")

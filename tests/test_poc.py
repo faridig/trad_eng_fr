@@ -1,13 +1,18 @@
 import os
 import pytest
 from poc_audio import find_devices, record_simultaneous
+from tests.conftest import skip_if_ci, skip_if_no_pulseaudio
 
+@skip_if_ci("Test nécessite un environnement avec audio")
+@skip_if_no_pulseaudio("Test nécessite PulseAudio")
 def test_devices_found():
     """Vérifie que les périphériques requis sont détectés."""
     micro, system = find_devices()
     assert micro is not None, "Microphone non trouvé"
     assert system is not None, "Loopback système non trouvé"
 
+@skip_if_ci("Test nécessite un environnement avec audio")
+@skip_if_no_pulseaudio("Test nécessite PulseAudio")
 def test_recordings_integrity():
     """Vérifie la création et l'intégrité (taille > 0) des fichiers audio."""
     micro, system = find_devices()
