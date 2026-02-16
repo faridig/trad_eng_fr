@@ -105,7 +105,7 @@ async def test_full_pipeline_fidelity():
     print("Traitement en cours...")
     
     # Attendre que le résultat arrive ou timeout
-    timeout = 30
+    timeout = 120 if is_ci else 30
     start_wait = time.time()
     while not results["translation"] and (time.time() - start_wait) < timeout:
         await asyncio.sleep(0.5)
