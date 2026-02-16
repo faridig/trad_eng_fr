@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class AsyncPipeline:
     def __init__(self, vad_threshold=0.5, model_size="large-v3", device="auto", input_sample_rate=16000):
         self.vad = VADDetector(threshold=vad_threshold)
-        self.transcriber = Transcriber(model_size=model_size)
+        self.transcriber = Transcriber(model_size=model_size, device=device)
         self.translator = Translator(device=device)
         self.tts = TTS(device=device)
         

@@ -1,13 +1,22 @@
 from faster_whisper import WhisperModel
 import numpy as np
 
+import torch
+
 class Transcriber:
     """
     Transicripteur utilisant Faster-Whisper.
-    Optimisé pour CUDA.
     """
-    def __init__(self, model_size="large-v3", device="cuda", compute_type="float16"):
-        # Utilisation de large-v3 par défaut pour une meilleure robustesse multi-langue
+    def __init__(self, model_size="large-v3", device="auto", compute_type="auto"):
+        # Détection automatique du device
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # Détection automatique du type de calcul
+        if compute_type == "auto":
+            compute_type = "float16" if device == "cuda" else "int8"
+            
+        print(f"STT: Initialisation de {model_size} sur {device} ({compute_type})...")
         self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
     def transcribe(self, audio: np.ndarray, language: str = "fr"):
