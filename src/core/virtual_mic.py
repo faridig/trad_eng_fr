@@ -26,9 +26,10 @@ class VirtualMicrophone:
         Initialise le micro virtuel.
         
         Args:
-            sink_name: Nom du sink virtuel à créer
+            sink_name: Nom de la source virtuelle à créer (sera utilisé par Google Meet)
         """
-        self.sink_name = sink_name
+        self.sink_name = sink_name  # Nom de la source (vox-transync-mic)
+        self.output_sink_name: Optional[str] = None  # Nom du sink de sortie (vox-transync-mic-output)
         self.sink_index: Optional[int] = None
         self.source_name: Optional[str] = None
         self.source_index: Optional[int] = None
@@ -40,65 +41,98 @@ class VirtualMicrophone:
         
     def create_virtual_sink(self) -> bool:
         """
-        Crée un sink virtuel et sa source associée.
+        Crée un sink virtuel et une VRAIE source pour Google Meet.
+        
+        Architecture :
+        1. Crée un null-sink (vox-transync-output) pour la sortie audio
+        2. Crée une remap-source (vox-transync-mic) comme vraie source d'entrée
+           pointant vers vox-transync-output.monitor
         
         Returns:
             True si la création a réussi, False sinon
         """
         try:
-            logger.info(f"Création du sink virtuel '{self.sink_name}'...")
+            # Noms des devices
+            self.output_sink_name = f"{self.sink_name}-output"
+            self.source_name = self.sink_name  # vox-transync-mic (vraie source)
             
-            # Créer un null-sink (sink virtuel)
-            # module-null-sink crée à la fois un sink et une source
-            cmd = [
+            logger.info(f"Création du micro virtuel '{self.source_name}'...")
+            
+            # 1. Créer un null-sink pour la sortie audio
+            logger.info(f"Création du sink de sortie '{self.output_sink_name}'...")
+            sink_cmd = [
                 "pactl", "load-module", "module-null-sink",
-                f"sink_name={self.sink_name}",
-                f"sink_properties=device.description={self.sink_name}"
+                f"sink_name={self.output_sink_name}",
+                f"sink_properties=device.description={self.output_sink_name}"
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            module_index = result.stdout.strip()
+            sink_result = subprocess.run(sink_cmd, capture_output=True, text=True, check=True)
+            sink_module_index = sink_result.stdout.strip()
             
-            if not module_index.isdigit():
-                logger.error(f"Échec création sink: {result.stderr}")
+            if not sink_module_index.isdigit():
+                logger.error(f"Échec création sink: {sink_result.stderr}")
                 return False
                 
-            logger.info(f"Sink virtuel créé (module index: {module_index})")
+            logger.info(f"Sink de sortie créé (module index: {sink_module_index})")
+            
+            # 2. Créer une VRAIE source (remap-source) pour Google Meet
+            logger.info(f"Création de la source '{self.source_name}'...")
+            source_cmd = [
+                "pactl", "load-module", "module-remap-source",
+                f"source_name={self.source_name}",
+                f"master={self.output_sink_name}.monitor",
+                f"source_properties=device.description={self.source_name}"
+            ]
+            
+            source_result = subprocess.run(source_cmd, capture_output=True, text=True, check=True)
+            source_module_index = source_result.stdout.strip()
+            
+            if not source_module_index.isdigit():
+                logger.error(f"Échec création source: {source_result.stderr}")
+                # Nettoyer le sink créé
+                subprocess.run(["pactl", "unload-module", sink_module_index], 
+                             capture_output=True, text=True)
+                return False
+                
+            logger.info(f"Source créée (module index: {source_module_index})")
+            
+            # Laisser le temps à PulseAudio de créer les devices
+            time.sleep(0.5)
             
             # Récupérer les informations du sink créé
-            time.sleep(0.5)  # Laisser le temps à PulseAudio
-            
-            # Trouver l'index du sink
             sinks_cmd = ["pactl", "list", "sinks", "short"]
             sinks_result = subprocess.run(sinks_cmd, capture_output=True, text=True, check=True)
             
             for line in sinks_result.stdout.strip().split('\n'):
-                if line and self.sink_name in line:
+                if line and self.output_sink_name in line:
                     parts = line.split()
                     if len(parts) >= 1:
                         self.sink_index = int(parts[0])
                         logger.info(f"Sink index: {self.sink_index}")
                         break
             
-            # Trouver la source associée (nom conventionnel: <sink_name>.monitor)
-            self.source_name = f"{self.sink_name}.monitor"
-            
+            # Récupérer les informations de la source créée
             sources_cmd = ["pactl", "list", "sources", "short"]
             sources_result = subprocess.run(sources_cmd, capture_output=True, text=True, check=True)
             
             for line in sources_result.stdout.strip().split('\n'):
-                if line and self.source_name in line:
+                if line and self.source_name in line and ".monitor" not in line:
                     parts = line.split()
                     if len(parts) >= 1:
                         self.source_index = int(parts[0])
                         logger.info(f"Source index: {self.source_index}")
                         break
             
+            # Vérifier que la source n'est PAS un .monitor
+            if ".monitor" in self.source_name:
+                logger.error(f"ERREUR: La source '{self.source_name}' est un monitor, pas une vraie source!")
+                self.destroy_virtual_sink()
+                return False
+            
             # Créer un loopback pour monitoring (optionnel)
-            # Cela permet d'entendre ce qui est envoyé au micro virtuel
             loopback_cmd = [
                 "pactl", "load-module", "module-loopback",
-                f"source={self.source_name}",
+                f"source={self.output_sink_name}.monitor",
                 "latency_msec=10"
             ]
             
@@ -106,14 +140,14 @@ class VirtualMicrophone:
             logger.info("Loopback de monitoring créé")
             
             self.is_created = True
-            logger.info(f"Micro virtuel '{self.sink_name}' créé avec succès")
-            logger.info(f"Source disponible: {self.source_name}")
+            logger.info(f"Micro virtuel '{self.source_name}' créé avec succès")
+            logger.info(f"Architecture: TTS → {self.output_sink_name} → {self.source_name} → Google Meet")
             logger.info("Configurez Google Meet pour utiliser cette source comme micro")
             
             return True
             
         except subprocess.CalledProcessError as e:
-            logger.error(f"Erreur création sink virtuel: {e.stderr}")
+            logger.error(f"Erreur création micro virtuel: {e.stderr}")
             return False
         except Exception as e:
             logger.error(f"Erreur inattendue: {e}")
@@ -121,17 +155,17 @@ class VirtualMicrophone:
     
     def destroy_virtual_sink(self) -> bool:
         """
-        Supprime le sink virtuel créé.
+        Supprime le sink virtuel et la source créés.
         
         Returns:
             True si la suppression a réussi, False sinon
         """
         try:
             if not self.is_created:
-                logger.warning("Aucun sink virtuel à supprimer")
+                logger.warning("Aucun micro virtuel à supprimer")
                 return True
             
-            logger.info(f"Suppression du sink virtuel '{self.sink_name}'...")
+            logger.info(f"Suppression du micro virtuel '{self.source_name}'...")
             
             # Trouver et décharger tous les modules associés
             modules_cmd = ["pactl", "list", "modules", "short"]
@@ -139,10 +173,18 @@ class VirtualMicrophone:
             
             modules_to_unload = []
             for line in modules_result.stdout.strip().split('\n'):
-                if line and self.sink_name in line:
-                    parts = line.split()
-                    if len(parts) >= 1:
-                        modules_to_unload.append(parts[0])
+                if line:
+                    # Vérifier si la ligne contient l'un de nos noms (en évitant None)
+                    name_in_line = False
+                    if self.sink_name and self.sink_name in line:
+                        name_in_line = True
+                    if self.output_sink_name and self.output_sink_name in line:
+                        name_in_line = True
+                    
+                    if name_in_line:
+                        parts = line.split()
+                        if len(parts) >= 1:
+                            modules_to_unload.append(parts[0])
             
             # Décharger les modules
             for module_id in modules_to_unload:
@@ -153,12 +195,13 @@ class VirtualMicrophone:
             self.is_created = False
             self.sink_index = None
             self.source_index = None
-            logger.info("Sink virtuel supprimé avec succès")
+            self.output_sink_name = None
+            logger.info("Micro virtuel supprimé avec succès")
             
             return True
             
         except subprocess.CalledProcessError as e:
-            logger.error(f"Erreur suppression sink: {e.stderr}")
+            logger.error(f"Erreur suppression micro virtuel: {e.stderr}")
             return False
         except Exception as e:
             logger.error(f"Erreur inattendue: {e}")
@@ -223,21 +266,29 @@ class VirtualMicrophone:
     
     def _find_sounddevice_device_id(self) -> Optional[int]:
         """
-        Trouve l'ID du device sounddevice correspondant au sink virtuel.
+        Trouve l'ID du device sounddevice correspondant au sink de sortie.
         
         Returns:
             ID du device ou None si non trouvé
         """
         try:
             devices = sd.query_devices()
+            # Chercher d'abord le sink de sortie
+            if self.output_sink_name:
+                for i, device in enumerate(devices):
+                    if self.output_sink_name in device['name'] and device['max_output_channels'] > 0:
+                        logger.info(f"Device sounddevice trouvé: {device['name']} (id: {i})")
+                        return i
+            
+            # Fallback: chercher par le nom de la source
             for i, device in enumerate(devices):
                 if self.sink_name in device['name'] and device['max_output_channels'] > 0:
-                    logger.info(f"Device sounddevice trouvé: {device['name']} (id: {i})")
+                    logger.info(f"Device sounddevice trouvé (fallback): {device['name']} (id: {i})")
                     return i
         except Exception as e:
             logger.warning(f"Impossible de trouver device sounddevice: {e}")
         
-        logger.warning(f"Device sounddevice pour '{self.sink_name}' non trouvé, utilisation par défaut")
+        logger.warning(f"Device sounddevice pour '{self.output_sink_name or self.sink_name}' non trouvé, utilisation par défaut")
         return None
     
     def play_audio(self, audio_data: np.ndarray, sample_rate: int):
@@ -281,9 +332,17 @@ class VirtualMicrophone:
         if not self.is_created or not self.source_name:
             return "Micro virtuel non configuré. Exécutez create_virtual_sink() d'abord."
         
+        # Vérifier que la source n'est pas un .monitor
+        if ".monitor" in self.source_name:
+            warning = "⚠️ ATTENTION: La source est un .monitor, pas une vraie source!\n"
+            warning += "Google Meet ne pourra pas l'utiliser comme microphone.\n"
+        else:
+            warning = "✅ La source est une VRAIE source utilisable par Google Meet.\n"
+        
         instructions = f"""
         === CONFIGURATION GOOGLE MEET ===
         
+        {warning}
         1. Ouvrez Google Meet
         2. Cliquez sur les trois points (⋮) → Paramètres
         3. Allez dans l'onglet "Audio"
@@ -291,7 +350,12 @@ class VirtualMicrophone:
         5. Testez le micro avec le bouton "Test le microphone"
         6. La traduction sera maintenant audible dans Google Meet
         
-        Note: Le micro virtuel est: {self.source_name}
+        Architecture:
+        - Sortie TTS → {self.output_sink_name} (sink)
+        - Entrée Google Meet ← {self.source_name} (source)
+        - Connection: {self.source_name} ← {self.output_sink_name}.monitor
+        
+        Note: Le micro virtuel est: {self.source_name} (VRAIE source)
         """
         return instructions
     
@@ -308,14 +372,24 @@ class VirtualMicrophone:
 
 
 def test_virtual_microphone():
-    """Test du micro virtuel."""
+    """Test du micro virtuel avec nouvelle architecture."""
     import time
     
-    print("=== TEST MICRO VIRTUEL ===")
+    print("=== TEST MICRO VIRTUEL (Nouvelle Architecture) ===")
+    print("Architecture: null-sink + remap-source pour vraie source Google Meet")
     
     with VirtualMicrophone() as vmic:
         print("Micro virtuel créé")
-        print(vmic.get_setup_instructions())
+        instructions = vmic.get_setup_instructions()
+        print(instructions)
+        
+        # Vérifier que la source n'est pas un .monitor
+        if vmic.source_name and ".monitor" in vmic.source_name:
+            print("❌ ERREUR: La source est un .monitor, pas une vraie source!")
+            return False
+        
+        print(f"✅ Source créée: {vmic.source_name} (vraie source)")
+        print(f"✅ Sink de sortie: {vmic.output_sink_name}")
         
         # Générer un bip de test
         duration = 1.0  # secondes
@@ -328,9 +402,13 @@ def test_virtual_microphone():
         # Attendre la fin de la lecture
         time.sleep(2)
         
-        print("Test terminé")
+        print("Test terminé avec succès")
+        print("Instructions Google Meet:")
+        print(f"1. Sélectionnez '{vmic.source_name}' comme microphone")
+        print(f"2. Testez avec le bouton 'Test le microphone'")
     
     print("Micro virtuel nettoyé")
+    return True
 
 
 if __name__ == "__main__":

@@ -25,6 +25,36 @@ pactl --version
 
 VoxTransync crée automatiquement un micro virtuel lors du démarrage en mode Google Meet.
 
+### 2.0 Architecture du Micro Virtuel
+
+VoxTransync utilise une architecture à deux composants pour créer une **VRAIE source** utilisable par Google Meet :
+
+```
+┌─────────────────┐    ┌─────────────────────┐    ┌─────────────────┐
+│   Sortie TTS    │───▶│  vox-transync-output │───▶│ Google Meet     │
+│   (Audio)       │    │   (null-sink)        │    │   (Microphone)  │
+└─────────────────┘    └─────────────────────┘    └─────────────────┘
+                                       │                    ▲
+                                       ▼                    │
+                               ┌─────────────────┐          │
+                               │  .monitor       │──────────┘
+                               └─────────────────┘
+                                       │
+                                       ▼
+┌─────────────────┐    ┌─────────────────────┐
+│   Google Meet   │◀───│  vox-transync-mic   │
+│   (Capture)     │    │   (remap-source)    │
+└─────────────────┘    └─────────────────────┘
+```
+
+1. **`vox-transync-output`** : Sink de sortie (null-sink) où l'audio TTS est joué
+2. **`vox-transync-mic`** : Vraie source (remap-source) pointant vers `vox-transync-output.monitor`
+
+**Pourquoi cette architecture ?**
+- Google Meet nécessite une **vraie source** (input/microphone), pas un `.monitor`
+- Un `.monitor` est une source de monitoring, pas une source d'entrée
+- `module-remap-source` crée une vraie source qui pointe vers un `.monitor`
+
 ### 2.1 Démarrer VoxTransync en mode Google Meet
 
 ```python
@@ -49,12 +79,20 @@ asyncio.run(main())
 Vous pouvez vérifier que le micro virtuel a été créé :
 
 ```bash
-# Lister les sources audio disponibles
+# Lister les sources audio disponibles (vraies sources)
 pactl list sources short | grep vox-transync
 
+# Résultat attendu (VRAIE source, pas .monitor) :
+# 99	vox-transync-mic	module-remap-source
+
+# Lister les sinks de sortie
+pactl list sinks short | grep vox-transync
+
 # Résultat attendu :
-# 99	vox-transync-mic.monitor	module-null-sink
+# 42	vox-transync-output	module-null-sink
 ```
+
+**Important** : Vérifiez que la source n'est **PAS** un `.monitor`. Google Meet nécessite une vraie source, pas un monitor.
 
 ## 3. Configuration Google Meet
 
@@ -67,8 +105,9 @@ pactl list sources short | grep vox-transync
 5. **Aller dans l'onglet "Audio"**
 6. **Dans la section "Microphone"**, sélectionner :
    ```
-   vox-transync-mic.monitor
+   vox-transync-mic
    ```
+   **Important** : Sélectionnez `vox-transync-mic` (sans `.monitor`)
 7. **Tester le microphone** avec le bouton "Test le microphone"
 8. **Fermer les paramètres**
 
@@ -77,7 +116,7 @@ pactl list sources short | grep vox-transync
 ```
 Google Meet → ⋮ → Paramètres → Audio → Microphone
 ↓
-Sélectionner : vox-transync-mic.monitor
+Sélectionner : vox-transync-mic (VRAIE source)
 ↓
 Tester le microphone
 ```

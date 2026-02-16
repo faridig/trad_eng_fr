@@ -29,29 +29,40 @@ class TestVirtualMicrophone:
     
     @patch('subprocess.run')
     def test_create_virtual_sink_success(self, mock_run):
-        """Test successful creation of virtual sink."""
+        """Test successful creation of virtual sink with new architecture."""
         # Mock subprocess.run responses
-        mock_load_module = Mock()
-        mock_load_module.stdout = "42\n"
-        mock_load_module.stderr = ""
+        mock_sink_module = Mock()
+        mock_sink_module.stdout = "42\n"
+        mock_sink_module.stderr = ""
+        
+        mock_source_module = Mock()
+        mock_source_module.stdout = "99\n"
+        mock_source_module.stderr = ""
         
         mock_list_sinks = Mock()
-        mock_list_sinks.stdout = "42  test-mic  module-null-sink\n"
+        mock_list_sinks.stdout = "42  test-mic-output  module-null-sink\n"
         mock_list_sinks.stderr = ""
         
         mock_list_sources = Mock()
-        mock_list_sources.stdout = "99  test-mic.monitor  module-null-sink\n"
+        mock_list_sources.stdout = "99  test-mic  module-remap-source\n"
         mock_list_sources.stderr = ""
         
         # Configure mock to return different values based on command
+        call_count = 0
         def run_side_effect(cmd, *args, **kwargs):
-            if "load-module" in cmd and "module-null-sink" in cmd:
-                return mock_load_module
-            elif "list" in cmd and "sinks" in cmd:
+            nonlocal call_count
+            call_count += 1
+            
+            cmd_str = ' '.join(cmd)
+            if "load-module" in cmd_str and "module-null-sink" in cmd_str:
+                return mock_sink_module
+            elif "load-module" in cmd_str and "module-remap-source" in cmd_str:
+                return mock_source_module
+            elif "list" in cmd_str and "sinks" in cmd_str:
                 return mock_list_sinks
-            elif "list" in cmd and "sources" in cmd:
+            elif "list" in cmd_str and "sources" in cmd_str:
                 return mock_list_sources
-            elif "load-module" in cmd and "module-loopback" in cmd:
+            elif "load-module" in cmd_str and "module-loopback" in cmd_str:
                 return Mock(stdout="", stderr="")
             else:
                 return Mock(stdout="", stderr="")
@@ -65,10 +76,14 @@ class TestVirtualMicrophone:
         assert vmic.is_created is True
         assert vmic.sink_index == 42
         assert vmic.source_index == 99
-        assert vmic.source_name == "test-mic.monitor"
+        assert vmic.source_name == "test-mic"  # Vraie source, pas .monitor
+        assert vmic.output_sink_name == "test-mic-output"  # Sink de sortie
         
-        # Verify subprocess.run was called
-        assert mock_run.call_count >= 3
+        # Verify subprocess.run was called for both sink and source
+        assert call_count >= 4  # null-sink + remap-source + list sinks + list sources
+        
+        # Verify the source is NOT a .monitor
+        assert ".monitor" not in vmic.source_name
     
     @patch('subprocess.run')
     def test_create_virtual_sink_failure(self, mock_run):
@@ -160,12 +175,20 @@ class TestVirtualMicrophone:
         instructions = vmic.get_setup_instructions()
         assert "non configuré" in instructions or "not configured" in instructions.lower()
         
-        # Test with sink created
+        # Test with sink created (vraie source)
         vmic.is_created = True
+        vmic.source_name = "test-mic"
+        vmic.output_sink_name = "test-mic-output"
+        instructions = vmic.get_setup_instructions()
+        assert "test-mic" in instructions
+        assert "Google Meet" in instructions
+        assert "VRAIE source" in instructions or "vraie source" in instructions.lower()
+        
+        # Test with .monitor source (should show warning)
         vmic.source_name = "test-mic.monitor"
         instructions = vmic.get_setup_instructions()
-        assert "test-mic.monitor" in instructions
-        assert "Google Meet" in instructions
+        assert "ATTENTION" in instructions or "Warning" in instructions.lower()
+        assert ".monitor" in instructions
     
     def test_start_stop_playback(self):
         """Test starting and stopping playback thread."""
@@ -223,6 +246,24 @@ class TestVirtualMicrophone:
         device_id = vmic._find_sounddevice_device_id()
         
         assert device_id is None
+    
+    def test_source_is_not_monitor(self):
+        """Test that the source created is not a .monitor source."""
+        vmic = VirtualMicrophone("test-mic")
+        
+        # Simulate creation
+        vmic.is_created = True
+        vmic.source_name = "test-mic"
+        vmic.output_sink_name = "test-mic-output"
+        
+        # Source should NOT be a .monitor
+        assert vmic.source_name is not None
+        assert ".monitor" not in vmic.source_name
+        
+        # Test get_setup_instructions doesn't show warning
+        instructions = vmic.get_setup_instructions()
+        assert "ATTENTION" not in instructions
+        assert "Warning" not in instructions.lower()
 
 
 if __name__ == "__main__":
