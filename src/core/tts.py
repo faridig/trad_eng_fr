@@ -132,6 +132,14 @@ class TTS:
             speed=1.0, 
             lang=lang
         )
+        
+        # S'assurer que samples est 1D (mono)
+        if samples.ndim > 1:
+            samples = samples.squeeze()
+        if samples.ndim > 1:
+            # Si toujours multi-dimensionnel, prendre la première colonne
+            samples = samples[:, 0]
+            
         return samples, sample_rate
 
     def play(self, samples, sample_rate):

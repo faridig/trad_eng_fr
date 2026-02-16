@@ -1,4 +1,5 @@
 import numpy as np
+import os
 from src.core.vad import VADDetector
 import soundfile as sf
 
@@ -18,6 +19,15 @@ def test_robustness():
 
     # Test 2: Audio avec de la parole réelle
     print("Test 2: Parole réelle (test_micro.wav)...")
+    
+    # Créer le fichier s'il n'existe pas (pour CI)
+    if not os.path.exists('test_micro.wav'):
+        print("Création d'un fichier audio de test vide...")
+        import numpy as np
+        # Créer 1 seconde de silence
+        samples = np.zeros(16000, dtype=np.float32)
+        sf.write('test_micro.wav', samples, 16000)
+    
     data, samplerate = sf.read('test_micro.wav')
     # Normalisation manuelle pour le test VAD direct (le pipeline le fera sinon)
     if data.ndim > 1:

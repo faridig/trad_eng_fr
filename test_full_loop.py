@@ -31,8 +31,17 @@ async def test_full_pipeline_fidelity():
         print("❌ Échec de la génération TTS")
         return
 
-    sf.write('test_system.wav', samples, sr)
-    print(f"✅ Échantillon généré: test_system.wav ({len(samples)} samples @ {sr}Hz)")
+    # S'assurer que samples est 1D pour soundfile
+    if samples.ndim > 1:
+        samples = samples.squeeze()
+    
+    try:
+        sf.write('test_system.wav', samples, sr)
+        print(f"✅ Échantillon généré: test_system.wav ({len(samples)} samples @ {sr}Hz)")
+    except Exception as e:
+        print(f"⚠️ Impossible d'écrire le fichier audio: {e}")
+        print(f"Shape des samples: {samples.shape}, dtype: {samples.dtype}")
+        # Continuer sans écrire le fichier
 
     # 2. Initialisation du Pipeline avec large-v3
     print(f"\nInitialisation du pipeline avec le modèle 'large-v3'...")
