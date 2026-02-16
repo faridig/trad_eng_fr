@@ -23,7 +23,6 @@ def test_robustness():
     # Créer le fichier s'il n'existe pas (pour CI)
     if not os.path.exists('test_micro.wav'):
         print("Création d'un fichier audio de test vide...")
-        import numpy as np
         # Créer 1 seconde de silence
         samples = np.zeros(16000, dtype=np.float32)
         sf.write('test_micro.wav', samples, 16000)
