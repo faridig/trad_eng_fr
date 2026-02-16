@@ -11,3 +11,8 @@ torchaudio
 transformers
 sentencepiece
 ctranslate2>=4.0.0
+kokoro-onnx
+soundfile
+sacremoses
+pytest
+pytest-asyncio

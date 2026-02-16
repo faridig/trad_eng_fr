@@ -15,15 +15,15 @@ class Transcriber:
         Transcrit un segment audio.
         audio: tableau numpy (float32) à 16kHz.
         """
-        # Paramètres optimisés pour réduire les hallucinations et forcer le langage
+        # Paramètres optimisés pour la latence (beam_size=1) et forcer le langage
         segments, info = self.model.transcribe(
             audio, 
-            beam_size=5, 
+            beam_size=1, 
             language=language, 
             task="transcribe",
-            vad_filter=False, # On fait déjà la VAD en amont, on évite les conflits
+            vad_filter=False, 
             condition_on_previous_text=False,
-            no_speech_threshold=0.3 # Plus permissif pour éviter les textes vides
+            no_speech_threshold=0.3
         )
         
         # On concatène les segments pour avoir le texte complet
