@@ -1,0 +1,37 @@
+name: CI-FIX
+on:
+  push:
+    branches: [ main, feat/* ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libpulse0 libportaudio2 espeak-ng
+        
+    - name: Run relevant tests only
+      run: |
+        export PYTHONPATH=$PYTHONPATH:.
+        # Tests pertinents pour cette PR
+        pytest tests/test_virtual_mic.py -v
+        pytest tests/test_audio_env.py -v
+        pytest tests/test_vad.py -v
+        pytest tests/test_translator.py -v
+        pytest tests/test_tts.py -v
