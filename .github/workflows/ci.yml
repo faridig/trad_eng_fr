@@ -27,11 +27,10 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libpulse0
+        sudo apt-get install -y ffmpeg libpulse0 libportaudio2 espeak-ng
         
     - name: Run tests
       run: |
         export PYTHONPATH=$PYTHONPATH:.
-        # On ignore les erreurs de connexion à PulseAudio en CI pour le moment
-        # car on n'a pas de serveur PulseAudio qui tourne dans le runner.
-        pytest || echo "Tests failed (expected in headless CI without PulseAudio)"
+        # On ne peut plus ignorer les échecs, la qualité est primordiale
+        pytest -s

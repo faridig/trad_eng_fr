@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 test_micro.wav
 test_system.wav
+models/
+*.wav
