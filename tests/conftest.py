@@ -4,6 +4,10 @@ Configuration des tests pytest.
 import os
 import pytest
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "gpu: mark test as requiring GPU")
+    config.addinivalue_line("markers", "audio: mark test as requiring audio device")
+
 # Décorateur pour skip les tests audio en CI
 def skip_if_ci(reason="Test nécessite un environnement avec audio"):
     """Décorateur pour skip les tests qui nécessitent audio en CI."""
