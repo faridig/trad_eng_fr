@@ -13,6 +13,7 @@ def mock_pipeline_deps():
          patch('src.core.pipeline.TTS'):
         yield
 
+@pytest.mark.gpu
 @pytest.mark.asyncio
 async def test_pipeline_basic_flow(mock_pipeline_deps):
     # On utilise un modèle minuscule pour le test ou on simule

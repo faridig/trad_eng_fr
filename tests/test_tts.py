@@ -7,6 +7,7 @@ from src.core.tts import TTS
 def tts():
     return TTS()
 
+@pytest.mark.gpu
 @pytest.mark.skipif(os.environ.get('CI') == 'true', reason="Skip heavy model loading in CI")
 def test_tts_generation_en(tts):
     text = "Hello, this is a test."
@@ -15,6 +16,7 @@ def test_tts_generation_en(tts):
     assert sample_rate == 24000
     assert len(samples) > 0
 
+@pytest.mark.gpu
 @pytest.mark.skipif(os.environ.get('CI') == 'true', reason="Skip heavy model loading in CI")
 def test_tts_generation_fr(tts):
     # Note: Kokoro v0.19 supporte le français avec lang="fr-fr"
