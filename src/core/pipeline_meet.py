@@ -192,42 +192,67 @@ class MeetPipeline(AsyncPipeline):
 async def demo_google_meet():
     """Démonstration du pipeline Google Meet."""
     import soundfile as sf
+    import sounddevice as sd
     
     print("=== DÉMO GOOGLE MEET PIPELINE ===\n")
     
-    # Créer le pipeline
+    # Créer le pipeline (Large-v3 sur GPU)
     pipeline = MeetPipeline(model_size="large-v3")
     
     print("1. Démarrage avec micro virtuel...")
-    await pipeline.start(use_virtual_mic=True)
+    # On lance le pipeline en tâche de fond pour ne pas bloquer
+    pipeline_task = asyncio.create_task(pipeline.start(use_virtual_mic=True))
+    
+    # On laisse le temps au pipeline de s'initialiser (création micro, chargement modèles)
+    await asyncio.sleep(5)
     
     print("\n2. Statut initial:")
     status = pipeline.get_status()
     for key, value in status.items():
         print(f"   {key}: {value}")
     
-    print("\n3. Test avec audio pré-enregistré...")
+    print("\n3. MODE LIVE ACTIVÉ (Parlez maintenant !)")
+    print("   Le pipeline écoute votre micro réel.")
+    print("   La traduction sera envoyée vers 'vox-transync-mic' (Google Meet).")
+    print("   Pressez Ctrl+C pour arrêter.\n")
+
+    # Définition du callback audio (Bridge Sync -> Async)
+    loop = asyncio.get_running_loop()
     
-    # Générer un fichier audio de test
-    from src.core.tts import TTS
-    tts = TTS()
-    test_text = "Bonjour, ceci est un test de traduction pour Google Meet."
-    samples, sr = tts.generate(test_text, voice="ff_siwis", lang="fr-fr")
-    
-    if samples is not None:
-        sf.write('test_meet.wav', samples, sr)
-        print(f"   Fichier test généré: test_meet.wav")
+    def audio_callback(indata, frames, time_info, status):
+        """Callback appelé par sounddevice à chaque bloc audio."""
+        if status:
+            print(status)
+        # Copie des données pour éviter les problèmes de mémoire partagée
+        chunk = indata.copy()
+        # Envoi dans la queue asynchrone de manière thread-safe
+        asyncio.run_coroutine_threadsafe(pipeline.add_audio_chunk(chunk), loop)
+
+    # Configuration du stream audio d'entrée (Micro Réel)
+    # On utilise default=True pour prendre le micro système par défaut
+    try:
+        input_stream = sd.InputStream(
+            samplerate=16000,
+            channels=1,
+            blocksize=4096,  # ~250ms de latence
+            callback=audio_callback,
+            dtype='float32'
+        )
         
-        # Simuler l'injection audio
-        print("   Simulation injection audio dans pipeline...")
-        
-        # Note: Dans une vraie démo, on utiliserait add_audio_chunk
-        # Pour cette démo, on montre juste que le pipeline est prêt
-        
-        print("   (En production: l'audio serait capturé du système/micro)")
-    
-    print("\n4. Arrêt du pipeline...")
-    await pipeline.stop()
+        # Démarrage du flux audio
+        with input_stream:
+            print("   🎤 Capture microphone active. Parlez...")
+            while True:
+                # Afficher un feedback visuel simple toutes les secondes
+                await asyncio.sleep(1)
+                
+    except KeyboardInterrupt:
+        print("\nArrêt demandé par l'utilisateur...")
+    except Exception as e:
+        print(f"\n❌ Erreur audio: {e}")
+    finally:
+        print("\n4. Arrêt du pipeline...")
+        await pipeline.stop()
     
     print("\n✅ Démo terminée")
     print("\nInstructions pour Google Meet:")
