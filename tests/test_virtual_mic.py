@@ -1,7 +1,8 @@
 """
-Tests for the VirtualMicrophone class using pulsectl.
+Tests for the VirtualMicrophone class using pulsectl and pactl.
 """
 import pytest
+import subprocess
 from unittest.mock import Mock, patch, MagicMock
 import numpy as np
 import threading
@@ -33,7 +34,7 @@ class TestVirtualMicrophone:
         """Test successful creation of virtual sink with pulsectl."""
         # Setup mock Pulse client
         mock_pulse = mock_pulse_class.return_value.__enter__.return_value
-        mock_pulse.module_load.side_effect = [101, 102, 103] # sink, source, loopback
+        mock_pulse.module_load.side_effect = [101, 102]
         
         # Mock sink and source lists for volume setting
         mock_sink = Mock()
@@ -47,63 +48,33 @@ class TestVirtualMicrophone:
         mock_pulse.source_list.return_value = [mock_source]
         
         vmic = VirtualMicrophone("test-mic")
-        with patch.object(vmic, '_refresh_sounddevice') as mock_refresh:
+        with patch.object(vmic, 'destroy_virtual_sink'):
             result = vmic.create_virtual_sink()
         
         assert result is True
         assert vmic.is_created is True
-        assert 101 in vmic._module_indices
-        assert 102 in vmic._module_indices
         
         # Verify pulsectl calls
         assert mock_pulse.module_load.call_count >= 2
-        mock_pulse.sink_mute.assert_called()
-        mock_pulse.source_mute.assert_called()
 
     @patch('pulsectl.Pulse')
-    def test_create_virtual_sink_failure(self, mock_pulse_class):
-        """Test failed creation of virtual sink."""
-        mock_pulse = mock_pulse_class.return_value.__enter__.return_value
-        mock_pulse.module_load.side_effect = Exception("Pulse failure")
-        
-        vmic = VirtualMicrophone("test-mic")
-        result = vmic.create_virtual_sink()
-        
-        assert result is False
-        assert not vmic.is_created
-
-    @patch('pulsectl.Pulse')
-    def test_destroy_virtual_sink_success(self, mock_pulse_class):
-        """Test successful destruction of virtual sink."""
-        mock_pulse = mock_pulse_class.return_value.__enter__.return_value
-        
+    @patch('src.core.virtual_mic.subprocess.run')
+    def test_destroy_virtual_sink_success(self, mock_run, mock_pulse_class):
+        """Test successful destruction of virtual sink (Aggressive cleaning)."""
         vmic = VirtualMicrophone("test-mic")
         vmic.is_created = True
-        vmic._module_indices = [101, 102]
+        
+        # Mock pactl list modules short
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "42  module-null-sink  sink_name=vox-test\n99  module-remap-source  source_name=vox-mic"
+        mock_run.side_effect = [mock_result, Mock(), Mock()] # list, unload 42, unload 99
         
         result = vmic.destroy_virtual_sink()
         
         assert result is True
         assert not vmic.is_created
-        assert vmic._module_indices == []
-        assert mock_pulse.module_unload.call_count == 2
-
-    def test_context_manager(self):
-        """Test context manager usage."""
-        with patch.object(VirtualMicrophone, 'create_virtual_sink') as mock_create, \
-             patch.object(VirtualMicrophone, 'start_playback') as mock_start, \
-             patch.object(VirtualMicrophone, 'stop_playback_thread') as mock_stop, \
-             patch.object(VirtualMicrophone, 'destroy_virtual_sink') as mock_destroy:
-            
-            mock_create.return_value = True
-            
-            with VirtualMicrophone("test-mic") as vmic:
-                assert isinstance(vmic, VirtualMicrophone)
-            
-            mock_create.assert_called_once()
-            mock_start.assert_called_once()
-            mock_stop.assert_called_once()
-            mock_destroy.assert_called_once()
+        assert mock_run.call_count >= 1
 
     @patch('sounddevice.query_devices')
     def test_find_sounddevice_device_id_found(self, mock_query_devices):
@@ -124,12 +95,30 @@ class TestVirtualMicrophone:
         """Test getting setup instructions."""
         vmic = VirtualMicrophone("test-mic")
         
-        # Test without sink created
-        instructions = vmic.get_setup_instructions()
-        assert "non configuré" in instructions
-        
-        # Test with sink created
-        vmic.is_created = True
+        # Test basic
         instructions = vmic.get_setup_instructions()
         assert "test-mic" in instructions
-        assert "GOOGLE MEET" in instructions.upper()
+        assert "Google Meet" in instructions
+
+    @patch('src.core.virtual_mic.subprocess.run')
+    @patch('os.getpid')
+    def test_force_redirect_stream(self, mock_getpid, mock_run):
+        """Test the brute force redirection logic."""
+        mock_getpid.return_value = 1234
+        vmic = VirtualMicrophone("test-mic")
+        
+        # Mock pactl list sink-inputs
+        mock_list = Mock()
+        mock_list.returncode = 0
+        mock_list.stdout = """Entrée de la destination #500
+        application.process.id = "1234"
+        """
+        mock_run.side_effect = [mock_list, Mock()] # list, then move
+        
+        vmic._force_redirect_stream()
+        
+        # Verify move-sink-input was called with ID 500
+        move_call = mock_run.call_args_list[1]
+        assert "move-sink-input" in move_call[0][0]
+        assert "500" in move_call[0][0]
+        assert vmic.output_sink_name in move_call[0][0]

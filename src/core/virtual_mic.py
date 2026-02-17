@@ -1,11 +1,14 @@
 """
 Module de gestion du micro virtuel pour Google Meet.
-Utilise pulsectl pour créer un sink virtuel et injecter l'audio traduit.
+Utilise pulsectl/pactl pour créer un sink virtuel et injecter l'audio traduit.
+Inclut une logique de redirection de secours "Brute Force" via pactl.
 """
+import os
 import time
 import logging
 import threading
 import queue
+import subprocess
 import numpy as np
 import sounddevice as sd
 import pulsectl
@@ -16,69 +19,39 @@ logger = logging.getLogger(__name__)
 class VirtualMicrophone:
     """
     Gère la création et l'utilisation d'un micro virtuel pour Google Meet.
-    
-    Crée un sink virtuel via PulseAudio qui peut être sélectionné
-    comme micro dans Google Meet. L'audio TTS y est injecté.
     """
     
     def __init__(self, sink_name: str = "vox-transync-mic"):
-        """
-        Initialise le micro virtuel.
-        
-        Args:
-            sink_name: Nom de la source virtuelle à créer (sera utilisé par Google Meet)
-        """
         self.sink_name = sink_name
-        self.source_name = sink_name  # Pour compatibilité
+        self.source_name = sink_name
         self.output_sink_name = f"{sink_name}-output"
         self.is_created = False
         self.audio_queue = queue.Queue()
         self.playback_thread: Optional[threading.Thread] = None
         self.stop_playback = threading.Event()
         self.sample_rate = 48000
-        
-        # Indices des modules PulseAudio pour le nettoyage
         self._module_indices: List[int] = []
         
     def create_virtual_sink(self) -> bool:
-        """
-        Crée un sink virtuel et une source pour Google Meet via pulsectl.
-        """
-        logger.info("Préparation de l'environnement audio avec pulsectl...")
-        self.destroy_virtual_sink()
+        """Crée l'architecture audio via pulsectl."""
+        logger.info("Initialisation Brute Force de l'environnement audio...")
+        self.destroy_virtual_sink() # Nettoyage agressif préalable
         time.sleep(0.5)
 
         try:
             with pulsectl.Pulse('vox-transync-setup') as pulse:
-                # 1. Créer le Null Sink (Sortie TTS)
-                logger.info(f"Chargement du module-null-sink: {self.output_sink_name}")
-                sink_args = (
-                    f"sink_name={self.output_sink_name} "
-                    f"rate={self.sample_rate} "
-                    "format=s16le "
-                    f"sink_properties=device.description={self.output_sink_name}"
-                )
+                # 1. Null Sink
+                sink_args = f"sink_name={self.output_sink_name} rate={self.sample_rate} format=s16le sink_properties=device.description={self.output_sink_name}"
                 sink_idx = pulse.module_load('module-null-sink', sink_args)
                 self._module_indices.append(sink_idx)
                 
-                # 2. Créer la Remap Source (Micro pour Meet)
-                logger.info(f"Chargement du module-remap-source: {self.sink_name}")
-                source_props = (
-                    "device.description=\"Vox Transync Microphone\" "
-                    "device.class=\"audio.input\" "
-                    "device.icon_name=\"audio-input-microphone\" "
-                    "device.form_factor=\"microphone\" "
-                    "media.role=\"communication\""
-                )
-                source_args = (
-                    f"source_name={self.sink_name} "
-                    f"master={self.output_sink_name}.monitor "
-                    f"source_properties='{source_props}'"
-                )
+                # 2. Remap Source
+                source_props = "device.description=\"Vox Transync Microphone\" device.class=\"audio.input\" device.icon_name=\"audio-input-microphone\" device.form_factor=\"microphone\" media.role=\"communication\""
+                source_args = f"source_name={self.sink_name} master={self.output_sink_name}.monitor source_properties='{source_props}'"
                 source_idx = pulse.module_load('module-remap-source', source_args)
                 self._module_indices.append(source_idx)
 
-                # 3. Forcer Volume et Unmute
+                # 3. Unmute & Volume
                 time.sleep(0.2)
                 for sink in pulse.sink_list():
                     if sink.name == self.output_sink_name:
@@ -90,95 +63,82 @@ class VirtualMicrophone:
                         pulse.source_mute(source.index, mute=False)
                         pulse.volume_set_all_chans(source, 1.0)
 
-                # 4. Loopback pour monitoring (optionnel)
-                try:
-                    loopback_idx = pulse.module_load('module-loopback', f"source={self.output_sink_name}.monitor latency_msec=10")
-                    self._module_indices.append(loopback_idx)
-                except Exception as e:
-                    logger.warning(f"Échec création loopback monitoring: {e}")
-
             self.is_created = True
-            logger.info("Architecture audio pulsectl créée avec succès.")
-            
-            # 5. Rafraîchissement SoundDevice (Correction bug 'Device not found')
             self._refresh_sounddevice()
-            
             return True
 
         except Exception as e:
-            logger.error(f"Erreur pulsectl lors de la création du micro virtuel: {e}")
-            self.destroy_virtual_sink()
+            logger.error(f"Erreur lors de la création du micro: {e}")
             return False
 
     def _refresh_sounddevice(self):
-        """Rafraîchit de manière robuste la liste des périphériques sounddevice."""
-        logger.info("Rafraîchissement de la liste des périphériques sounddevice...")
+        """Rafraîchit la liste des périphériques sounddevice."""
         try:
-            # Attendre que PulseAudio propage les nouveaux devices au niveau ALSA
-            time.sleep(1.0)
+            time.sleep(0.5)
             sd._terminate()
             sd._initialize()
-            
-            # Vérification de la présence
-            devices = sd.query_devices()
-            found = any(self.output_sink_name in d['name'] for d in devices if d['max_output_channels'] > 0)
-            if found:
-                logger.info(f"✅ Device '{self.output_sink_name}' détecté par sounddevice.")
-            else:
-                logger.warning(f"⚠️ Device '{self.output_sink_name}' toujours invisible pour sounddevice après rafraîchissement.")
-                # Tentative désespérée : un deuxième rafraîchissement après une pause
-                time.sleep(1.0)
-                sd._terminate()
-                sd._initialize()
-        except Exception as e:
-            logger.error(f"Erreur critique lors du rafraîchissement sounddevice: {e}")
+        except:
+            pass
 
     def destroy_virtual_sink(self) -> bool:
-        """Supprime les modules PulseAudio créés."""
+        """Nettoyage Agressif : décharge tous les modules contenant 'vox'."""
+        logger.info("Nettoyage Agressif des modules audio 'vox'...")
         try:
-            with pulsectl.Pulse('vox-transync-cleanup') as pulse:
-                # 1. Décharger via les indices sauvegardés
-                if self._module_indices:
-                    for idx in reversed(self._module_indices):
-                        try:
-                            pulse.module_unload(idx)
-                        except:
-                            pass
-                    self._module_indices = []
-
-                # 2. Nettoyage préventif par nom (au cas où les indices soient perdus)
-                for mod in pulse.module_list():
-                    if 'vox-transync' in str(mod.argument):
-                        try:
-                            pulse.module_unload(mod.index)
-                        except:
-                            pass
+            # Récupérer la liste des modules via pactl (plus direct pour le nettoyage agressif)
+            cmd = ["pactl", "list", "modules", "short"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if "vox" in line:
+                        parts = line.split()
+                        if parts:
+                            mod_id = parts[0]
+                            logger.info(f"Déchargement forcé du module {mod_id}")
+                            subprocess.run(["pactl", "unload-module", mod_id], capture_output=True)
             
             self.is_created = False
+            self._module_indices = []
             return True
         except Exception as e:
-            logger.error(f"Erreur lors du nettoyage audio: {e}")
+            logger.error(f"Erreur lors du nettoyage agressif: {e}")
             return False
 
     def start_playback(self):
-        """Démarre le thread de playback audio."""
         if self.playback_thread and self.playback_thread.is_alive():
             return
-        
         self.stop_playback.clear()
         self.playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
         self.playback_thread.start()
-        logger.info("Thread de playback démarré")
+        logger.info("Thread de playback démarré (Prêt pour Redirection de secours)")
 
-    def stop_playback_thread(self):
-        """Arrête le thread de playback audio."""
-        self.stop_playback.set()
-        if self.playback_thread:
-            self.playback_thread.join(timeout=2.0)
-            logger.info("Thread de playback arrêté")
+    def _force_redirect_stream(self):
+        """Redirection de secours : arrache le flux audio de Python et le branche sur le micro virtuel."""
+        try:
+            pid = os.getpid()
+            # 1. Lister les sink-inputs
+            cmd = ["pactl", "list", "sink-inputs"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                return
+
+            # Parsing simple pour trouver l'ID du flux de notre PID
+            current_id = None
+            for line in result.stdout.split('\n'):
+                line = line.strip()
+                if line.startswith("Entrée de la destination #") or line.startswith("Sink Input #"):
+                    current_id = line.split('#')[-1]
+                
+                if f"application.process.id = \"{pid}\"" in line or f"application.process.id = {pid}" in line:
+                    if current_id:
+                        logger.info(f"Flux audio détecté (ID: {current_id}). Tentative de redirection vers {self.output_sink_name}...")
+                        subprocess.run(["pactl", "move-sink-input", current_id, self.output_sink_name], capture_output=True)
+                        # On ne s'arrête pas au premier au cas où il y en aurait plusieurs
+        except Exception as e:
+            logger.debug(f"Erreur redirection: {e}")
 
     def _playback_loop(self):
-        """Boucle de playback qui lit l'audio de la queue et le joue."""
         device_id = self._find_sounddevice_device_id()
         
         while not self.stop_playback.is_set():
@@ -187,10 +147,15 @@ class VirtualMicrophone:
                 audio_data, sample_rate = item
                 
                 if audio_data is not None:
+                    # Logique de Brute Force : si device non trouvé, joue sur défaut et redirige
                     if device_id is not None:
                         sd.play(audio_data, sample_rate, device=device_id)
                     else:
-                        sd.play(audio_data, sample_rate)
+                        sd.play(audio_data, sample_rate) # Sortie par défaut
+                    
+                    # Redirection de secours immédiate
+                    self._force_redirect_stream()
+                    
                     sd.wait()
             except queue.Empty:
                 continue
@@ -198,7 +163,6 @@ class VirtualMicrophone:
                 logger.error(f"Erreur playback: {e}")
 
     def _find_sounddevice_device_id(self) -> Optional[int]:
-        """Trouve l'ID sounddevice correspondant au sink de sortie."""
         try:
             devices = sd.query_devices()
             for i, device in enumerate(devices):
@@ -209,26 +173,20 @@ class VirtualMicrophone:
         return None
 
     def play_audio(self, audio_data: np.ndarray, sample_rate: int):
-        """Ajoute l'audio à la queue de playback."""
         if not self.is_created:
-            if not self.create_virtual_sink():
-                return
+            self.create_virtual_sink()
         
         if audio_data.ndim > 1:
             audio_data = audio_data.squeeze()
-        
         self.audio_queue.put((audio_data, sample_rate))
 
     def get_setup_instructions(self) -> str:
-        """Retourne les instructions de configuration."""
-        if not self.is_created:
-            return "Micro virtuel non configuré."
-        
-        return f"""
-        === CONFIGURATION GOOGLE MEET ===
-        1. Sélectionnez le micro: "Vox Transync Microphone" (ou {self.sink_name})
-        2. Vérifiez que la sortie audio est votre haut-parleur habituel.
-        """
+        return f"Sélectionnez '{self.sink_name}' dans Google Meet."
+
+    def stop_playback_thread(self):
+        self.stop_playback.set()
+        if self.playback_thread:
+            self.playback_thread.join(timeout=2.0)
 
     def __enter__(self):
         self.create_virtual_sink()
@@ -241,19 +199,11 @@ class VirtualMicrophone:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("=== TEST MICRO VIRTUEL (Architecture pulsectl) ===")
     vmic = VirtualMicrophone()
-    if vmic.create_virtual_sink():
-        print("✅ Micro virtuel créé avec succès.")
-        # Générer un court silence/bip pour tester sounddevice
-        duration = 0.5
-        t = np.linspace(0, duration, int(vmic.sample_rate * duration), False)
-        test_audio = 0.1 * np.sin(2 * np.pi * 440 * t)
-        vmic.start_playback()
-        vmic.play_audio(test_audio, vmic.sample_rate)
-        time.sleep(1)
-        vmic.stop_playback_thread()
-        vmic.destroy_virtual_sink()
-        print("✅ Test terminé et micro nettoyé.")
-    else:
-        print("❌ Échec de la création du micro virtuel.")
+    vmic.create_virtual_sink()
+    vmic.start_playback()
+    # Test avec 1s de bip
+    t = np.linspace(0, 1, 48000, False)
+    vmic.play_audio(0.1 * np.sin(2 * np.pi * 440 * t), 48000)
+    time.sleep(2)
+    vmic.destroy_virtual_sink()
