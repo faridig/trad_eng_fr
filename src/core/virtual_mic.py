@@ -51,6 +51,12 @@ class VirtualMicrophone:
         Returns:
             True si la création a réussi, False sinon
         """
+        # --- DURCISSEMENT : Nettoyage préalable ---
+        logger.info("Préparation de l'environnement audio (nettoyage)...")
+        self.destroy_virtual_sink()
+        time.sleep(1.0)  # Stabilisation PulseAudio
+        # ------------------------------------------
+
         try:
             # Noms des devices
             self.output_sink_name = f"{self.sink_name}-output"
@@ -59,10 +65,13 @@ class VirtualMicrophone:
             logger.info(f"Création du micro virtuel '{self.source_name}'...")
             
             # 1. Créer un null-sink pour la sortie audio
-            logger.info(f"Création du sink de sortie '{self.output_sink_name}'...")
+            # DURCISSEMENT : Forcer rate=48000 et format=s16le pour compatibilité Meet/Chrome
+            logger.info(f"Création du sink de sortie '{self.output_sink_name}' (48kHz, S16LE)...")
             sink_cmd = [
                 "pactl", "load-module", "module-null-sink",
                 f"sink_name={self.output_sink_name}",
+                "rate=48000",
+                "format=s16le",
                 f"sink_properties=device.description={self.output_sink_name}"
             ]
             
@@ -129,6 +138,21 @@ class VirtualMicrophone:
                 self.destroy_virtual_sink()
                 return False
             
+            # --- CORRECTION VOLUME & MUTE ---
+            # Forcer le volume à 100% et désactiver le muet pour le sink et la source
+            try:
+                # 1. Unmute Sink Output
+                subprocess.run(["pactl", "set-sink-mute", self.output_sink_name, "0"], check=False)
+                subprocess.run(["pactl", "set-sink-volume", self.output_sink_name, "100%"], check=False)
+                
+                # 2. Unmute Source (Micro Virtuel)
+                subprocess.run(["pactl", "set-source-mute", self.source_name, "0"], check=False)
+                subprocess.run(["pactl", "set-source-volume", self.source_name, "100%"], check=False)
+                logger.info("Volumes forcés à 100% et Mute désactivé")
+            except Exception as e:
+                logger.warning(f"Impossible de forcer les volumes: {e}")
+            # --------------------------------
+
             # Créer un loopback pour monitoring (optionnel)
             loopback_cmd = [
                 "pactl", "load-module", "module-loopback",
@@ -156,55 +180,51 @@ class VirtualMicrophone:
     def destroy_virtual_sink(self) -> bool:
         """
         Supprime le sink virtuel et la source créés.
+        Cherche par pattern pour nettoyer même après un crash.
         
         Returns:
             True si la suppression a réussi, False sinon
         """
         try:
-            if not self.is_created:
-                logger.warning("Aucun micro virtuel à supprimer")
-                return True
+            # DURCISSEMENT : On ne se fie plus à self.is_created uniquement
+            logger.info("Recherche de modules audio VoxTransync à nettoyer...")
             
-            logger.info(f"Suppression du micro virtuel '{self.source_name}'...")
-            
-            # Trouver et décharger tous les modules associés
+            # Lister tous les modules chargés
             modules_cmd = ["pactl", "list", "modules", "short"]
-            modules_result = subprocess.run(modules_cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(modules_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                logger.warning("pactl n'est pas disponible ou a échoué. Nettoyage impossible.")
+                return False
             
             modules_to_unload = []
-            for line in modules_result.stdout.strip().split('\n'):
-                if line:
-                    # Vérifier si la ligne contient l'un de nos noms (en évitant None)
-                    name_in_line = False
-                    if self.sink_name and self.sink_name in line:
-                        name_in_line = True
-                    if self.output_sink_name and self.output_sink_name in line:
-                        name_in_line = True
-                    
-                    if name_in_line:
-                        parts = line.split()
-                        if len(parts) >= 1:
-                            modules_to_unload.append(parts[0])
+            patterns = ["vox-transync", "vox-mic"] # Patterns larges pour tout attraper
             
-            # Décharger les modules
-            for module_id in modules_to_unload:
-                unload_cmd = ["pactl", "unload-module", module_id]
-                subprocess.run(unload_cmd, capture_output=True, text=True)
-                logger.debug(f"Module {module_id} déchargé")
+            for line in result.stdout.strip().split('\n'):
+                if any(p in line for p in patterns):
+                    parts = line.split()
+                    if parts:
+                        modules_to_unload.append(parts[0])
             
+            if modules_to_unload:
+                logger.info(f"Nettoyage de {len(modules_to_unload)} modules orphelins...")
+                for module_id in modules_to_unload:
+                    subprocess.run(["pactl", "unload-module", module_id], capture_output=True)
+                    logger.debug(f"Module {module_id} déchargé")
+                
+                # Laisser le temps à PulseAudio de se stabiliser après suppression
+                time.sleep(1.0)
+            else:
+                logger.info("Aucun module résiduel trouvé.")
+
             self.is_created = False
             self.sink_index = None
             self.source_index = None
             self.output_sink_name = None
-            logger.info("Micro virtuel supprimé avec succès")
-            
             return True
             
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Erreur suppression micro virtuel: {e.stderr}")
-            return False
         except Exception as e:
-            logger.error(f"Erreur inattendue: {e}")
+            logger.error(f"Erreur lors du nettoyage défensif: {e}")
             return False
     
     def start_playback(self):
@@ -272,23 +292,38 @@ class VirtualMicrophone:
             ID du device ou None si non trouvé
         """
         try:
+            # Force refresh of device list
+            sd._terminate()
+            sd._initialize()
+            
             devices = sd.query_devices()
-            # Chercher d'abord le sink de sortie
+            
+            # 1. Recherche EXACTE du sink de sortie (vox-transync-mic-output)
             if self.output_sink_name:
                 for i, device in enumerate(devices):
+                    # On cherche un périphérique de sortie (> 0 channels) qui contient le nom
                     if self.output_sink_name in device['name'] and device['max_output_channels'] > 0:
-                        logger.info(f"Device sounddevice trouvé: {device['name']} (id: {i})")
+                        logger.info(f"Device sounddevice trouvé [EXACT]: {device['name']} (id: {i})")
                         return i
             
-            # Fallback: chercher par le nom de la source
+            # 2. Recherche par le nom générique (au cas où)
             for i, device in enumerate(devices):
                 if self.sink_name in device['name'] and device['max_output_channels'] > 0:
-                    logger.info(f"Device sounddevice trouvé (fallback): {device['name']} (id: {i})")
+                    logger.info(f"Device sounddevice trouvé [FALLBACK]: {device['name']} (id: {i})")
                     return i
+                    
         except Exception as e:
             logger.warning(f"Impossible de trouver device sounddevice: {e}")
         
-        logger.warning(f"Device sounddevice pour '{self.output_sink_name or self.sink_name}' non trouvé, utilisation par défaut")
+        logger.warning(f"Device sounddevice pour '{self.output_sink_name or self.sink_name}' non trouvé. Liste des devices:")
+        # Log des devices disponibles pour debug
+        try:
+            for i, d in enumerate(sd.query_devices()):
+                if d['max_output_channels'] > 0:
+                    logger.warning(f"  [{i}] {d['name']}")
+        except:
+            pass
+            
         return None
     
     def play_audio(self, audio_data: np.ndarray, sample_rate: int):
