@@ -15,11 +15,12 @@ class TestMeetPipeline:
     @pytest.fixture
     def mock_dependencies(self):
         """Fixture to mock all dependencies that load models."""
-        # Patch at the source modules where classes are defined
-        with patch('src.core.vad.VADDetector') as mock_vad, \
-             patch('src.stt.transcriber.Transcriber') as mock_transcriber, \
-             patch('src.core.translator.Translator') as mock_translator, \
-             patch('src.core.tts.TTS') as mock_tts:
+        # Patch the classes WHERE THEY ARE USED (in src.core.pipeline)
+        # since src.core.pipeline uses "from src.core.vad import VADDetector"
+        with patch('src.core.pipeline.VADDetector') as mock_vad, \
+             patch('src.core.pipeline.Transcriber') as mock_transcriber, \
+             patch('src.core.pipeline.Translator') as mock_translator, \
+             patch('src.core.pipeline.TTS') as mock_tts:
             
             # Create mock instances
             mock_vad_instance = MagicMock()
