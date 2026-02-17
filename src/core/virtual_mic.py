@@ -86,11 +86,22 @@ class VirtualMicrophone:
             
             # 2. Créer une VRAIE source (remap-source) pour Google Meet
             logger.info(f"Création de la source '{self.source_name}'...")
+            
+            # DURCISSEMENT UX : Forcer la visibilité dans Chrome/Meet
+            # Utilisation de guillemets échappés pour les propriétés avec espaces
+            source_props = (
+                "device.description=\"Vox Transync Microphone\" "
+                "device.class=\"audio.input\" "
+                "device.icon_name=\"audio-input-microphone\" "
+                "device.form_factor=\"microphone\" "
+                "media.role=\"communication\""
+            )
+            
             source_cmd = [
                 "pactl", "load-module", "module-remap-source",
                 f"source_name={self.source_name}",
                 f"master={self.output_sink_name}.monitor",
-                f"source_properties=device.description={self.source_name}"
+                f"source_properties={source_props}"
             ]
             
             source_result = subprocess.run(source_cmd, capture_output=True, text=True, check=True)
@@ -168,6 +179,14 @@ class VirtualMicrophone:
             logger.info(f"Architecture: TTS → {self.output_sink_name} → {self.source_name} → Google Meet")
             logger.info("Configurez Google Meet pour utiliser cette source comme micro")
             
+            # UX : Rafraîchir SoundDevice pour que Python voie le nouveau périphérique immédiatement
+            try:
+                sd._terminate()
+                sd._initialize()
+                logger.info("Liste des périphériques SoundDevice rafraîchie.")
+            except Exception as e:
+                logger.warning(f"Échec du rafraîchissement SoundDevice: {e}")
+
             return True
             
         except subprocess.CalledProcessError as e:
@@ -384,6 +403,9 @@ class VirtualMicrophone:
         4. Dans "Microphone", sélectionnez: "{self.source_name}"
         5. Testez le micro avec le bouton "Test le microphone"
         6. La traduction sera maintenant audible dans Google Meet
+        
+        💡 ASTUCE: Si le micro n'apparaît pas dans Meet, rafraîchissez l'onglet 
+           Google Meet ou redémarrez votre navigateur.
         
         Architecture:
         - Sortie TTS → {self.output_sink_name} (sink)

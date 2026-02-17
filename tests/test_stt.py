@@ -19,10 +19,11 @@ def load_wav_to_numpy(path):
             
         return audio.astype(np.float32) / 32768.0
 
+@pytest.mark.skipif(os.environ.get('CI') == 'true', reason="Skip heavy model loading in CI")
 @pytest.mark.skipif(not os.path.exists("test_micro.wav"), reason="Test file not found")
 def test_transcription_on_file():
     # On utilise le défaut de la classe (large-v3)
-    transcriber = Transcriber(device="cuda")
+    transcriber = Transcriber(device="cpu") # Force CPU for tests
     audio = load_wav_to_numpy("test_micro.wav")
     
     text, info = transcriber.transcribe(audio, language="fr")

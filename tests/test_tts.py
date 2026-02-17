@@ -1,11 +1,13 @@
 import pytest
 import numpy as np
+import os
 from src.core.tts import TTS
 
 @pytest.fixture(scope="module")
 def tts():
     return TTS()
 
+@pytest.mark.skipif(os.environ.get('CI') == 'true', reason="Skip heavy model loading in CI")
 def test_tts_generation_en(tts):
     text = "Hello, this is a test."
     samples, sample_rate = tts.generate(text, voice="af_heart", lang="en-us")
@@ -13,6 +15,7 @@ def test_tts_generation_en(tts):
     assert sample_rate == 24000
     assert len(samples) > 0
 
+@pytest.mark.skipif(os.environ.get('CI') == 'true', reason="Skip heavy model loading in CI")
 def test_tts_generation_fr(tts):
     # Note: Kokoro v0.19 supporte le français avec lang="fr-fr"
     # Certaines versions de kokoro-onnx peuvent nécessiter une configuration spécifique
