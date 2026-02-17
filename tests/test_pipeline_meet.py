@@ -15,11 +15,11 @@ class TestMeetPipeline:
     @pytest.fixture
     def mock_dependencies(self):
         """Fixture to mock all dependencies that load models."""
-        # Patch at the source modules where classes are defined
-        with patch('src.core.vad.VADDetector') as mock_vad, \
-             patch('src.stt.transcriber.Transcriber') as mock_transcriber, \
-             patch('src.core.translator.Translator') as mock_translator, \
-             patch('src.core.tts.TTS') as mock_tts:
+        # Patch where the classes are USED, not defined
+        with patch('src.core.pipeline.VADDetector') as mock_vad, \
+             patch('src.core.pipeline.Transcriber') as mock_transcriber, \
+             patch('src.core.pipeline.Translator') as mock_translator, \
+             patch('src.core.pipeline.TTS') as mock_tts:
             
             # Create mock instances
             mock_vad_instance = MagicMock()
@@ -63,8 +63,9 @@ class TestMeetPipeline:
         mock_vmic.create_virtual_sink.return_value = True
         mock_virtual_mic_class.return_value = mock_vmic
         
-        # Mock parent start method
-        with patch.object(MeetPipeline, 'start', new_callable=AsyncMock) as mock_parent_start:
+        # Mock parent start method to prevent actual loop startup
+        # We patch at the source where AsyncPipeline is imported/defined
+        with patch('src.core.pipeline.AsyncPipeline.start', new_callable=AsyncMock) as mock_parent_start:
             await pipeline.start(use_virtual_mic=True)
             
             # Verify virtual mic was created
@@ -89,7 +90,7 @@ class TestMeetPipeline:
         mock_virtual_mic_class.return_value = mock_vmic
         
         # Mock parent start method
-        with patch.object(MeetPipeline, 'start', new_callable=AsyncMock) as mock_parent_start:
+        with patch('src.core.pipeline.AsyncPipeline.start', new_callable=AsyncMock) as mock_parent_start:
             await pipeline.start(use_virtual_mic=True)
             
             # Verify virtual mic creation was attempted
@@ -109,7 +110,7 @@ class TestMeetPipeline:
     async def test_start_without_virtual_mic(self, pipeline):
         """Test starting pipeline without virtual microphone."""
         # Mock parent start method
-        with patch.object(MeetPipeline, 'start', new_callable=AsyncMock) as mock_parent_start:
+        with patch('src.core.pipeline.AsyncPipeline.start', new_callable=AsyncMock) as mock_parent_start:
             await pipeline.start(use_virtual_mic=False)
             
             # Verify parent start was called
@@ -190,12 +191,23 @@ class TestMeetPipeline:
         await pipeline.translation_queue.put(("Bonjour, ceci est un test", "fr", 0.0))
         await pipeline.translation_queue.put(("Hello, this is English", "en", 0.0))
         
-        # Run translation loop once for each item
-        for _ in range(2):
+        # Run translation loop as a background task
+        loop_task = asyncio.create_task(pipeline.translation_loop())
+        
+        try:
+            # Wait for items to be processed (max 2 seconds)
+            for _ in range(20):
+                if pipeline.tts_queue.qsize() >= 1 and pipeline.translation_queue.empty():
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            # Cleanup
+            pipeline.is_running = False
+            loop_task.cancel()
             try:
-                await pipeline.translation_loop()
-            except asyncio.QueueEmpty:
-                break
+                await loop_task
+            except asyncio.CancelledError:
+                pass
         
         # Verify only French was translated
         pipeline.translator.translate.assert_called_once()
@@ -220,12 +232,23 @@ class TestMeetPipeline:
         await pipeline.translation_queue.put(("Hello, this is English", "en", 0.0))
         await pipeline.translation_queue.put(("Bonjour, ceci est français", "fr", 0.0))
         
-        # Run translation loop once for each item
-        for _ in range(2):
+        # Run translation loop as a background task
+        loop_task = asyncio.create_task(pipeline.translation_loop())
+        
+        try:
+            # Wait for items to be processed (max 2 seconds)
+            for _ in range(20):
+                if pipeline.tts_queue.qsize() >= 1 and pipeline.translation_queue.empty():
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            # Cleanup
+            pipeline.is_running = False
+            loop_task.cancel()
             try:
-                await pipeline.translation_loop()
-            except asyncio.QueueEmpty:
-                break
+                await loop_task
+            except asyncio.CancelledError:
+                pass
         
         # Verify only English was translated
         pipeline.translator.translate.assert_called_once()
@@ -253,11 +276,23 @@ class TestMeetPipeline:
         pipeline.tts_queue = asyncio.Queue()
         await pipeline.tts_queue.put(("Test text", "en", 0.0))
         
-        # Run tts loop once
+        # Run tts loop as a background task
+        loop_task = asyncio.create_task(pipeline.tts_loop())
+        
         try:
-            await pipeline.tts_loop()
-        except asyncio.QueueEmpty:
-            pass
+            # Wait for items to be processed
+            for _ in range(20):
+                if mock_vmic.play_audio.called and pipeline.tts_queue.empty():
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            # Cleanup
+            pipeline.is_running = False
+            loop_task.cancel()
+            try:
+                await loop_task
+            except asyncio.CancelledError:
+                pass
         
         # Verify audio was sent to virtual mic
         mock_vmic.play_audio.assert_called_once()
@@ -278,11 +313,23 @@ class TestMeetPipeline:
         pipeline.tts_queue = asyncio.Queue()
         await pipeline.tts_queue.put(("Test text", "en", 0.0))
         
-        # Run tts loop once
+        # Run tts loop as a background task
+        loop_task = asyncio.create_task(pipeline.tts_loop())
+        
         try:
-            await pipeline.tts_loop()
-        except asyncio.QueueEmpty:
-            pass
+            # Wait for items to be processed
+            for _ in range(20):
+                if pipeline.tts.play.called and pipeline.tts_queue.empty():
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            # Cleanup
+            pipeline.is_running = False
+            loop_task.cancel()
+            try:
+                await loop_task
+            except asyncio.CancelledError:
+                pass
         
         # Verify audio was played via default TTS
         pipeline.tts.play.assert_called_once()

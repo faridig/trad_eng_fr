@@ -3,6 +3,7 @@ import asyncio
 import numpy as np
 from src.core.pipeline import AsyncPipeline
 
+@pytest.mark.gpu
 @pytest.mark.asyncio
 async def test_pipeline_basic_flow():
     # On utilise un modèle minuscule pour le test ou on simule

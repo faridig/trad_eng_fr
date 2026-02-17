@@ -1,4 +1,5 @@
 import pytest
+import torch
 import numpy as np
 import wave
 import os
@@ -19,6 +20,8 @@ def load_wav_to_numpy(path):
             
         return audio.astype(np.float32) / 32768.0
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="GPU not available")
 @pytest.mark.skipif(not os.path.exists("test_micro.wav"), reason="Test file not found")
 def test_transcription_on_file():
     # On utilise le défaut de la classe (large-v3)
